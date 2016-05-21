@@ -17,6 +17,15 @@
  * This AutoSuggest jQuery plug-in is dual licensed under the MIT and GPL licenses:
  *   http://www.opensource.org/licenses/mit-license.php
  *   http://www.gnu.org/licenses/gpl.html
+ *
+ * Blueprint Additions:
+ *
+ *      - added new focusOnEnter option to control whether or not we focus on suggestion list when ENTER is pressed
+ *      - added key binding for enter key to automatically drop down to suggestion list on enter if match available and focusOnEnter is true
+ *      - updated to support jQuery UI theme
+ *      - all callback invocations modified to set 'this' to the input element
+ * 		- automatically add new item on enter if no match found
+ *		- allow user to enter special characters as part of search string
  */
 
 (function($){
@@ -40,6 +49,8 @@
 			neverSubmit: false,
 			selectionLimit: false,
 			showResultList: true,
+			focusOnEnter: false, // BLUEPRINT: if true, then we drop focus to the result list when RETURN or ENTER pressed
+			
 		  	start: function(){},
 		  	selectionClick: function(elem){},
 		  	selectionAdded: function(elem){},
@@ -70,17 +81,17 @@
 					x = opts.asHtmlID;
 					var x_id = x;
 				}
-				opts.start.call(this);
 				var input = $(this);
+				opts.start.call(input);
 				input.attr("autocomplete","off").addClass("as-input").attr("id",x_id).val(opts.startText);
 				var input_focus = false;
 				
 				// Setup basic elements and render them to the DOM
-				input.wrap('<ul class="as-selections" id="as-selections-'+x+'"></ul>').wrap('<li class="as-original" id="as-original-'+x+'"></li>');
+				input.wrap('<ul class="as-selections ui-widget-content bp-selections" id="as-selections-'+x+'"></ul>').wrap('<li class="as-original" id="as-original-'+x+'"></li>');
 				var selections_holder = $("#as-selections-"+x);
 				var org_li = $("#as-original-"+x);				
 				var results_holder = $('<div class="as-results" id="as-results-'+x+'"></div>').hide();
-				var results_ul =  $('<ul class="as-list"></ul>');
+				var results_ul =  $('<ul class="as-list ui-widget-content"></ul>');
 				var values_input = $('<input type="hidden" class="as-values" name="as_values_'+x+'" id="as-values-'+x+'" />');
 				var prefill_value = "";
 				if(typeof opts.preFill == "string"){
@@ -89,7 +100,7 @@
 						var v_data = {};
 						v_data[opts.selectedValuesProp] = vals[i];
 						if(vals[i] != ""){
-							add_selected_item(v_data, "000"+i);	
+							add_selected_item(v_data, "000"+i, false);	
 						}		
 					}
 					prefill_value = opts.preFill;
@@ -103,7 +114,7 @@
 							if(new_v == undefined){ new_v = ""; }
 							prefill_value = prefill_value+new_v+",";
 							if(new_v != ""){
-								add_selected_item(opts.preFill[i], "000"+i);	
+								add_selected_item(opts.preFill[i], "000"+i, false);	
 							}		
 						}
 					}
@@ -113,7 +124,7 @@
 					var lastChar = prefill_value.substring(prefill_value.length-1);
 					if(lastChar != ","){ prefill_value = prefill_value+","; }
 					values_input.val(","+prefill_value);
-					$("li.as-selection-item", selections_holder).addClass("blur").removeClass("selected");
+					$("li.as-selection-item", selections_holder).addClass("blur ui-state-active").removeClass("selected ui-state-highlight");
 				}
 				input.after(values_input);
 				selections_holder.click(function(){
@@ -131,7 +142,7 @@
 					if($(this).val() == opts.startText && values_input.val() == ""){
 						$(this).val("");
 					} else if(input_focus){
-						$("li.as-selection-item", selections_holder).removeClass("blur");
+						$("li.as-selection-item", selections_holder).removeClass("blur ui-state-active");
 						if($(this).val() != ""){
 							results_ul.css("width",selections_holder.outerWidth());
 							results_holder.show();
@@ -143,7 +154,7 @@
 					if($(this).val() == "" && values_input.val() == "" && prefill_value == ""){
 						$(this).val(opts.startText);
 					} else if(input_focus){
-						$("li.as-selection-item", selections_holder).addClass("blur").removeClass("selected");
+						$("li.as-selection-item", selections_holder).addClass("blur ui-state-active").removeClass("selected ui-state-highlight");
 						results_holder.hide();
 					}				
 				}).keydown(function(e) {
@@ -163,15 +174,15 @@
 							if(input.val() == ""){							
 								var last = values_input.val().split(",");
 								last = last[last.length - 2];
-								selections_holder.children().not(org_li.prev()).removeClass("selected");
+								selections_holder.children().not(org_li.prev()).removeClass("selected ui-state-highlight");
 								if(org_li.prev().hasClass("selected")){
 									values_input.val(values_input.val().replace(","+last+",",","));
-									opts.selectionRemoved.call(this, org_li.prev());
+									opts.selectionRemoved.call(input, org_li.prev());
 								} else {
-									opts.selectionClick.call(this, org_li.prev());
-									org_li.prev().addClass("selected");		
+									opts.selectionClick.call(input, org_li.prev());
+									org_li.prev().addClass("selected ui-state-highlight");		
 								}
-							}
+							} 
 							if(input.val().length == 1){
 								results_holder.hide();
 								 prev = "";
@@ -180,25 +191,40 @@
 								if (timeout){ clearTimeout(timeout); }
 								timeout = setTimeout(function(){ keyChange(); }, opts.keyDelay);
 							}
+							clearSelection();
 							break;
 						case 9: case 188:  // tab or comma
-							tab_press = true;
-							var i_input = input.val().replace(/(,)/g, "");
-							if(i_input != "" && values_input.val().search(","+i_input+",") < 0 && i_input.length >= opts.minChars){	
-								e.preventDefault();
-								var n_data = {};
-								n_data[opts.selectedItemProp] = i_input;
-								n_data[opts.selectedValuesProp] = i_input;																				
-								var lis = $("li", selections_holder).length;
-								add_selected_item(n_data, "00"+(lis+1));
-								input.val("");
-							}
+    						if(opts.selectionLimit && $("li.as-selection-item", selections_holder).length >= opts.selectionLimit){
+    							results_ul.html('<li class="as-message">'+opts.limitText+'</li>');
+    							results_holder.show();
+    						} else {
+    							tab_press = true;
+								handleTab(e, input);
+    						}
+					    
 						case 13: // return
 							tab_press = false;
 							var active = $("li.active:first", results_holder);
 							if(active.length > 0){
 								active.click();
 								results_holder.hide();
+								clearSelection();
+							}
+							else if($(":visible",results_holder).length > 0 && opts.focusOnEnter){
+								// BLUEPRINT: force selection if not already selected when enter pressed, but only if list is visible
+							    if(opts.selectionLimit && $("li.as-selection-item", selections_holder).length >= opts.selectionLimit){
+									results_ul.html('<li class="as-message">'+opts.limitText+'</li>');
+									results_holder.show();
+								} 
+								else if ($("li:not(.empty)", results_holder).length == 0) {
+									// BLUEPRINT: force addition of there are no suggestions (i.e. add a new item)
+									tab_press = true;
+									handleTab(e,input);
+								}
+								else {
+    							    e.preventDefault();
+    							    moveSelection("down");
+								}
 							}
 							if(opts.neverSubmit || active.length > 0){
 								e.preventDefault();
@@ -218,6 +244,23 @@
 					}
 				});
 				
+				function handleTab(event,input) {
+					var i_input = input.val().replace(/(,)/g, "");
+					if(i_input != "" && values_input.val().search(","+i_input+",") < 0 && i_input.length >= opts.minChars){	
+						event.preventDefault();
+						var n_data = {};
+						n_data[opts.selectedItemProp] = i_input;
+						n_data[opts.selectedValuesProp] = i_input;																				
+						var lis = $("li", selections_holder).length;
+						add_selected_item(n_data, "00"+(lis+1), true);
+						input.val("");
+
+						// BLUEPRINT: force clear selection after adding new item and hide the result holder
+						clearSelection();
+						results_holder.hide();
+					}
+				}
+				
 				function keyChange() {
 					// ignore if the following keys are pressed: [del] [shift] [capslock]
 					if( lastKeyPressCode == 46 || (lastKeyPressCode > 8 && lastKeyPressCode < 32) ){ return results_holder.hide(); }
@@ -225,35 +268,37 @@
 					if (string == prev) return;
 					prev = string;
 					if (string.length >= opts.minChars) {
-						selections_holder.addClass("loading");
+						selections_holder.addClass("loading ui-state-active");
 						if(d_type == "string"){
 							var limit = "";
 							if(opts.retrieveLimit){
 								limit = "&limit="+encodeURIComponent(opts.retrieveLimit);
 							}
 							if(opts.beforeRetrieve){
-								string = opts.beforeRetrieve.call(this, string);
+								string = opts.beforeRetrieve.call(input, string);
 							}
 							$.getJSON(req_string+"?"+opts.queryParam+"="+encodeURIComponent(string)+limit+opts.extraParams, function(data){ 
 								d_count = 0;
-								var new_data = opts.retrieveComplete.call(this, data);
+								var new_data = opts.retrieveComplete.call(input, data);
 								for (k in new_data) if (new_data.hasOwnProperty(k)) d_count++;
 								processData(new_data, string); 
 							});
 						} else {
 							if(opts.beforeRetrieve){
-								string = opts.beforeRetrieve.call(this, string);
+								string = opts.beforeRetrieve.call(input, string);
 							}
 							processData(org_data, string);
 						}
 					} else {
-						selections_holder.removeClass("loading");
+						selections_holder.removeClass("loading ui-state-active");
 						results_holder.hide();
 					}
 				}
 				var num_count = 0;
 				function processData(data, query){
 					if (!opts.matchCase){ query = query.toLowerCase(); }
+					// BLUEPRINT: escape the query string to allow users to enter special characters
+					var escquery = query.replace(/([.*+?^${}()|\[\]\/\\])/g, "\\$1");
 					var matchCount = 0;
 					results_holder.html(results_ul.html("")).hide();
 					for(var i=0;i<d_count;i++){				
@@ -272,41 +317,41 @@
 						}
 						if(str){
 							if (!opts.matchCase){ str = str.toLowerCase(); }				
-							if(str.search(query) != -1 && values_input.val().search(","+data[num][opts.selectedValuesProp]+",") == -1){
+							if(str.search(escquery) != -1 && values_input.val().search(","+data[num][opts.selectedValuesProp]+",") == -1){
 								forward = true;
 							}	
 						}
 						if(forward){
-							var formatted = $('<li class="as-result-item" id="as-result-item-'+num+'"></li>').click(function(){
+							var formatted = $('<li class="as-result-item border-light-bottom" id="as-result-item-'+num+'"></li>').click(function(){
 									var raw_data = $(this).data("data");
 									var number = raw_data.num;
 									if($("#as-selection-"+number, selections_holder).length <= 0 && !tab_press){
 										var data = raw_data.attributes;
 										input.val("").focus();
 										prev = "";
-										add_selected_item(data, number);
-										opts.resultClick.call(this, raw_data);
+										add_selected_item(data, number, true);
+										opts.resultClick.call(input, raw_data);
 										results_holder.hide();
 									}
 									tab_press = false;
 								}).mousedown(function(){ input_focus = false; }).mouseover(function(){
-									$("li", results_ul).removeClass("active");
-									$(this).addClass("active");
+									$("li", results_ul).removeClass("active ui-state-hover");
+									$(this).addClass("active ui-state-hover");
 								}).data("data",{attributes: data[num], num: num_count});
 							var this_data = $.extend({},data[num]);
 							if (!opts.matchCase){ 
-								var regx = new RegExp("(?![^&;]+;)(?!<[^<>]*)(" + query + ")(?![^<>]*>)(?![^&;]+;)", "gi");
+								var regx = new RegExp("(?![^&;]+;)(?!<[^<>]*)(" + escquery + ")(?![^<>]*>)(?![^&;]+;)", "gi");
 							} else {
-								var regx = new RegExp("(?![^&;]+;)(?!<[^<>]*)(" + query + ")(?![^<>]*>)(?![^&;]+;)", "g");
+								var regx = new RegExp("(?![^&;]+;)(?!<[^<>]*)(" + escquery + ")(?![^<>]*>)(?![^&;]+;)", "g");
 							}
 							
 							if(opts.resultsHighlight){
-								this_data[opts.selectedItemProp] = this_data[opts.selectedItemProp].replace(regx,"<em>$1</em>");
+								this_data[opts.selectedItemProp] = this_data[opts.selectedItemProp].replace(regx,"<span class='em ui-state-highlight'>$1</span>");
 							}
 							if(!opts.formatList){
 								formatted = formatted.html(this_data[opts.selectedItemProp]);
 							} else {
-								formatted = opts.formatList.call(this, this_data, formatted);	
+								formatted = opts.formatList.call(input, this_data, formatted);	
 							}
 							results_ul.append(formatted);
 							delete this_data;
@@ -314,31 +359,39 @@
 							if(opts.retrieveLimit && opts.retrieveLimit == matchCount ){ break; }
 						}
 					}
-					selections_holder.removeClass("loading");
+					selections_holder.removeClass("loading ui-state-active");
 					if(matchCount <= 0){
-						results_ul.html('<li class="as-message">'+opts.emptyText+'</li>');
+						results_ul.html('<li class="as-message border-light-bottom empty">'+opts.emptyText+'</li>');
 					}
 					results_ul.css("width", selections_holder.outerWidth());
 					results_holder.show();
-					opts.resultsComplete.call(this);
+					opts.resultsComplete.call(input);
 				}
 				
-				function add_selected_item(data, num){
+				function add_selected_item(data, num, enableCallback){
 					values_input.val(values_input.val()+data[opts.selectedValuesProp]+",");
-					var item = $('<li class="as-selection-item" id="as-selection-'+num+'"></li>').click(function(){
-							opts.selectionClick.call(this, $(this));
-							selections_holder.children().removeClass("selected");
-							$(this).addClass("selected");
+					var item = $('<li class="as-selection-item ui-state-default" id="as-selection-'+num+'"></li>').click(function(){
+							opts.selectionClick.call(input, $(this));
+							selections_holder.children().removeClass("selected ui-state-highlight");
+							$(this).addClass("selected ui-state-highlight");
 						}).mousedown(function(){ input_focus = false; });
 					var close = $('<a class="as-close">&times;</a>').click(function(){
 							values_input.val(values_input.val().replace(","+data[opts.selectedValuesProp]+",",","));
-							opts.selectionRemoved.call(this, item);
+							opts.selectionRemoved.call(input, item);
 							input_focus = true;
 							input.focus();
 							return false;
 						});
 					org_li.before(item.html(data[opts.selectedItemProp]).prepend(close));
-					opts.selectionAdded.call(this, org_li.prev());	
+					if (enableCallback) { opts.selectionAdded.call(input, org_li.prev()); }	
+					
+					// Handle hover state for selections
+    				$('ul.as-selections li.as-selection-item').bind( "mouseenter", function() {
+        				$( this ).addClass( "ui-state-hover" );
+        			})
+        			.bind( "mouseleave", function() {
+        				$( this ).removeClass( "ui-state-hover" );
+        			});
 				}
 				
 				function moveSelection(direction){
@@ -352,16 +405,23 @@
 						var active = $("li.active:first", results_holder);
 						if(active.length > 0){
 							if(direction == "down"){
-							start = active.next();
-							} else {
-								start = active.prev();
-							}	
-						}
-						lis.removeClass("active");
-						start.addClass("active");
+							    start = active.next();
+						    } else {
+							    start = active.prev();
+						    }	
+					    }
+						lis.removeClass("active ui-state-hover");
+						start.addClass("active ui-state-hover");
 					}
 				}
-									
+				
+				// BLUEPRINT: new method to clear the active list items from teh results list
+				function clearSelection() {
+					if($(":visible",results_holder).length > 0){
+						var lis = $("li", results_holder);
+						lis.removeClass("active ui-state-hover");
+					}
+				}					
 			});
 		}
 	}
